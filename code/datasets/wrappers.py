@@ -234,3 +234,76 @@ class SRImplicitUniformVaried(Dataset):
             'scale': scale,
             'gt': hr_rgb
         }
+
+@register('sr-implicit-downsampled-allqp')
+class SRImplicitDownsampledAllQP(Dataset):
+    def __init__(self, dataset, inp_size, scale=3, augment=False, sample_q=None):
+        """
+        Args:
+            dataset (Dataset): Underlying paired dataset returning a dict with keys:
+                               'hr' (HR image tensor) and 'lr' (dict mapping QP to LR image tensor).
+            inp_size (int): Crop size for the LR patch.
+            scale (int): Upscaling factor. (HR = LR * scale)
+            augment (bool): Whether to apply random flips.
+            sample_q (int, optional): If provided, randomly sample this many pixels from the HR crop.
+        """
+        self.dataset = dataset
+        self.inp_size = inp_size
+        self.scale = scale
+        self.augment = augment
+        self.sample_q = sample_q
+        # Retrieve QP keys from the first sample.
+        sample0 = self.dataset[0]
+        self.qp_keys = list(sample0['lr'].keys())
+        self.num_qp = len(self.qp_keys)
+
+    def __len__(self):
+        return len(self.dataset) * self.num_qp
+
+    def __getitem__(self, idx):
+        sample_idx = idx // self.num_qp
+        qp_idx = idx % self.num_qp
+        sample = self.dataset[sample_idx]
+        hr = sample['hr']          # HR tensor: [C, H, W]
+        lr_all = sample['lr']
+        qp = self.qp_keys[qp_idx]
+        lr = lr_all[qp]
+
+        if self.augment:
+            if random.random() < 0.5:
+                hr = torch.flip(hr, dims=[-1])
+                lr = torch.flip(lr, dims=[-1])
+            if random.random() < 0.5:
+                hr = torch.flip(hr, dims=[-2])
+                lr = torch.flip(lr, dims=[-2])
+
+        # Random crop on LR image.
+        _, H_lr, W_lr = lr.shape
+        if H_lr < self.inp_size or W_lr < self.inp_size:
+            raise ValueError("LR image is smaller than the specified inp_size")
+        x_lr = random.randint(0, H_lr - self.inp_size)
+        y_lr = random.randint(0, W_lr - self.inp_size)
+        lr_crop = lr[:, x_lr: x_lr+self.inp_size, y_lr: y_lr+self.inp_size]
+
+        x_hr = x_lr * self.scale
+        y_hr = y_lr * self.scale
+        inp_size_hr = self.inp_size * self.scale
+        hr_crop = hr[:, x_hr: x_hr+inp_size_hr, y_hr: y_hr+inp_size_hr]
+
+        hr_coord, hr_rgb = to_pixel_samples(hr_crop.contiguous())
+        scale_tensor = torch.ones_like(hr_coord)
+        scale_tensor[:, 0] *= 1.0 / hr_crop.shape[-2]
+        scale_tensor[:, 1] *= 1.0 / hr_crop.shape[-1]
+
+        if self.sample_q is not None and self.sample_q < hr_coord.shape[0]:
+            perm = torch.randperm(hr_coord.shape[0])[:self.sample_q]
+            hr_coord = hr_coord[perm]
+            hr_rgb = hr_rgb[perm]
+            scale_tensor = scale_tensor[perm]
+
+        return {
+            'inp': lr_crop,        # LR input patch: shape [C, inp_size, inp_size]
+            'coord': hr_coord,     # HR pixel coordinates (normalized): shape [sample_q, 2]
+            'scale': scale_tensor, # Normalization factors: shape [sample_q, 2]
+            'gt': hr_rgb           # Ground truth HR pixel values: shape [sample_q, C]
+        }

@@ -1,0 +1,70 @@
+train_dataset:
+  dataset:
+    name: paired-image-folder-icme
+    args:
+      hr_root: /home/preprocessed_datasets/sr-track-3/train_gt
+      lr_root: /home/preprocessed_datasets/sr-track-3/train_lr_h265
+      repeat: 1
+      cache: none
+  wrapper:
+    name: sr-implicit-downsampled-allqp
+    args:
+      inp_size: 48
+      scale: 3
+      augment: true
+      sample_q: 2304
+  batch_size: 16
+
+val_dataset:
+  dataset:
+    name: paired-image-folder-icme
+    args:
+      hr_root: /home/preprocessed_datasets/sr-track-3/val_gt
+      lr_root: /home/preprocessed_datasets/sr-track-3/val_lr_h265
+      repeat: 1
+      cache: bin
+  wrapper:
+    name: sr-implicit-downsampled-allqp
+    args:
+      inp_size: 48
+      scale: 3
+      sample_q: 2304
+  batch_size: 16
+
+data_norm:
+  inp: {sub: [0.5], div: [0.5]}
+  gt: {sub: [0.5], div: [0.5]}
+
+model:
+  name: ITNSR
+  args:
+    feat_unfold: True
+    local_ensemble: True
+    scale_token: True
+    encoder_spec:
+      name: rdn
+      args:
+        no_upsampling: true
+
+    imnet_spec:
+      name: mlp
+      args:
+        # in_dim: 1728
+        # out_dim: 3
+        hidden_list: [256,256,256,256]
+        act: 'gelu'
+
+optimizer:
+  name: adam
+  args:
+    lr: 2.e-4
+epoch_max: 10
+multi_step_lr:
+  milestones: [3, 5, 7, 8, 9]
+  gamma: 0.25
+
+epoch_val: 2
+epoch_save: 1
+
+resume: ~
+pre_train: /opt/vineet-workspace/ITSRN/code/save/exp0/epoch-best.pth
